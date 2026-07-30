@@ -320,6 +320,8 @@ if "scraping" not in st.session_state:
     st.session_state.scraping = False
 if "stop_requested" not in st.session_state:
     st.session_state.stop_requested = False
+if "current_mc" not in st.session_state:
+    st.session_state.current_mc = 1
 
 
 # ── Helper: render status badge ───────────────────────────────────────────────
@@ -412,7 +414,7 @@ st.markdown(
 
 # ── Input card ────────────────────────────────────────────────────────────────
 st.markdown('<div class="input-card">', unsafe_allow_html=True)
-col1, col2, col3, col4 = st.columns([2, 2, 1.5, 1.5])
+col1, col2, col3 = st.columns([3, 1.5, 1.5])
 
 with col1:
     start_mc = st.number_input(
@@ -425,66 +427,56 @@ with col1:
         key="start_mc",
     )
 with col2:
-    end_mc = st.number_input(
-        "End MC Number",
-        min_value=1,
-        max_value=9_999_999,
-        value=1066450,
-        step=1,
-        format="%d",
-        key="end_mc",
-    )
-with col3:
     st.markdown("<br>", unsafe_allow_html=True)
     scrape_btn = st.button("🔍 Start Scraping", type="primary", key="scrape_btn")
-with col4:
+with col3:
     st.markdown("<br>", unsafe_allow_html=True)
     stop_btn = st.button("⛔ Stop", type="secondary", key="stop_btn")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# ── Validation ────────────────────────────────────────────────────────────────
+# ── Start / Stop triggers ─────────────────────────────────────────────────────
 if scrape_btn:
-    if end_mc < start_mc:
-        st.error("⚠️ End MC must be greater than or equal to Start MC.")
-    elif (end_mc - start_mc + 1) > 500:
-        st.error("⚠️ Maximum range is 500 MC numbers per run.")
-    else:
-        st.session_state.results = []
-        st.session_state.stop_requested = False
-        st.session_state.scraping = True
+    st.session_state.results = []
+    st.session_state.stop_requested = False
+    st.session_state.current_mc = int(start_mc)
+    st.session_state.scraping = True
 
 if stop_btn:
     st.session_state.stop_requested = True
 
-# ── Scraping loop ─────────────────────────────────────────────────────────────
+# ── Scraping loop (runs until Stop is clicked) ────────────────────────────────
 if st.session_state.scraping:
-    total = int(end_mc) - int(start_mc) + 1
-    progress_bar = st.progress(0, text="Initializing scraper…")
+    if "current_mc" not in st.session_state:
+        st.session_state.current_mc = int(start_mc)
+
     status_text = st.empty()
     live_table = st.empty()
+    count = len(st.session_state.results)
 
-    for idx, mc in enumerate(range(int(start_mc), int(end_mc) + 1)):
-        if st.session_state.stop_requested:
-            st.warning("⛔ Scraping stopped by user.")
-            break
+    while not st.session_state.stop_requested:
+        mc = st.session_state.current_mc
 
-        pct = idx / total
-        progress_bar.progress(pct, text=f"Scraping MC-{mc:07d}… ({idx}/{total})")
         status_text.markdown(
-            f'<p style="color:#a0aec0;font-size:13px;text-align:center;">🔄 Fetching <b style="color:#c7d2fe;">MC-{mc:07d}</b> — {idx} done, {total - idx} remaining</p>',
+            f'<p style="color:#a0aec0;font-size:13px;text-align:center;">'
+            f'🔄 Fetching <b style="color:#c7d2fe;">MC-{mc:07d}</b> '\n            f'&nbsp;·&nbsp; <b style="color:#68d391;">{count}</b> scraped so far</p>',
             unsafe_allow_html=True,
         )
 
         result = scrape_mc(mc)
         st.session_state.results.append(result)
+        st.session_state.current_mc += 1
+        count += 1
 
         # Live preview (last 10 rows)
         preview = st.session_state.results[-10:]
         live_table.markdown(render_table(preview), unsafe_allow_html=True)
 
-    progress_bar.progress(1.0, text="✅ Scraping complete!")
-    status_text.empty()
+    status_text.markdown(
+        f'<p style="color:#68d391;font-size:13px;text-align:center;">'
+        f'⛔ Stopped at <b>MC-{st.session_state.current_mc:07d}</b> '\n        f'&nbsp;·&nbsp; <b>{count}</b> total scraped</p>',
+        unsafe_allow_html=True,
+    )
     st.session_state.scraping = False
 
 # ── Results tabs ──────────────────────────────────────────────────────────────
