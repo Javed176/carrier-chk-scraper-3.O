@@ -1,205 +1,96 @@
-import os
-import re
-import time
 import requests
-import pandas as pd
-import streamlit as st
 from bs4 import BeautifulSoup
-from supabase import create_client, Client
+import streamlit as st
 
-# ==========================================
-# 1. PAGE CONFIGURATION & SECRETS RETRIEVAL
-# ==========================================
-st.set_page_config(page_title="Carrier CHK Data Harvester", layout="wide")
+st.set_page_config(page_title="SAFER Carrier Scraper", page_icon="🚚")
 
-# Get secrets and strip stray whitespace/quotes
-raw_url = st.secrets.get("SUPABASE_URL") or os.getenv("SUPABASE_URL", "")
-raw_key = st.secrets.get("SUPABASE_KEY") or os.getenv("SUPABASE_KEY", "")
+st.title("🚚 SAFER Carrier Data Scraper")
+st.write("Fetch carrier snapshot data directly from the FMCSA SAFER website.")
 
-SUPABASE_URL = raw_url.strip().strip("'").strip('"')
-SUPABASE_KEY = raw_key.strip().strip("'").strip('"')
-
-@st.cache_resource
-def init_supabase():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        st.error("⚠️ Missing `SUPABASE_URL` or `SUPABASE_KEY` in Streamlit Secrets.")
-        st.stop()
-    try:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception as e:
-        st.error(f"⚠️ Failed to initialize Supabase client: {e}")
-        st.stop()
-
-supabase: Client = init_supabase()
-
-
-# ==========================================
-# 2. FMCSA SAFER SCRAPER LOGIC (NO TOKEN)
-# ==========================================
-def scrape_safer_and_update(mc_number: str, record_id: str):
-    """Scrapes FMCSA SAFER directly without any API key and updates Supabase."""
-    url = "https://safer.fmcsa.dot.gov/query.asp"
+def scrape_safer(search_type, search_number):
+    # Establish a persistent session
+    session = requests.Session()
     
-    payload = {
-        "searchtype": "ANY",
-        "query_type": "queryCarrierSnapshot",
-        "query_param": "MC_MX",
-        "query_string": str(mc_number).strip()
-    }
-
+    # Headers to mimic a standard desktop browser
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://safer.fmcsa.dot.gov/CompanySnapshot.aspx"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://safer.fmcsa.dot.gov/CompanySnapshot.aspx",
     }
+    session.headers.update(headers)
 
     try:
-        response = requests.post(url, data=payload, headers=headers, timeout=15)
-        
-        if response.status_code != 200:
-            supabase.table("carriers").update({
-                "carrier_name": f"HTTP {response.status_code} Error",
-                "status": f"FAILED_{response.status_code}"
-            }).eq("id", record_id).execute()
-            return
+        # Step 1: Visit the home page to acquire session cookies and pass initial security checks
+        session.get("https://safer.fmcsa.dot.gov/CompanySnapshot.aspx", timeout=10)
 
-        if "No record found" in response.text or "Record Not Found" in response.text:
-            supabase.table("carriers").update({
-                "carrier_name": "NOT FOUND",
-                "status": "NOT_FOUND"
-            }).eq("id", record_id).execute()
-            return
+        # Step 2: Now send the query request with acquired session cookies
+        url = "https://safer.fmcsa.dot.gov/query.asp"
+        param_type = "MC_MX" if "MC" in search_type else "USDOT"
+        params = {
+            "searchtype": "ANY",
+            "query_type": "queryCarrierSnapshot",
+            "query_param": param_type,
+            "query_string": str(search_number).strip(),
+        }
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        response = session.get(url, params=params, timeout=10)
+        response.raise_for_status()
 
-        def get_val(label_text):
-            tag = soup.find(lambda t: t.name in ['td', 'th'] and label_text in t.text)
-            if tag and tag.find_next_sibling('td'):
-                raw = tag.find_next_sibling('td').get_text(separator=" ", strip=True)
-                return re.sub(r'\s+', ' ', raw)
-            return "N/A"
+    except requests.exceptions.RequestException as e:
+        return None, f"Network error: {e}"
 
-        legal_name = get_val("Legal Name:")
-        entity_type = get_val("Entity Type:")
-        operating_status = get_val("Operating Status:")
+    soup = BeautifulSoup(response.text, "html.parser")
 
-        # Update Supabase database
-        supabase.table("carriers").update({
-            "carrier_name": legal_name,
-            "entity_type": entity_type,
-            "operating_status": operating_status,
-            "status": "COMPLETED"
-        }).eq("id", record_id).execute()
+    if "Record Inactive" in soup.text:
+        return None, "Carrier record is inactive or not found."
+    if "No records matching" in soup.text:
+        return None, "No record found for the provided number."
 
-    except Exception as e:
-        supabase.table("carriers").update({
-            "carrier_name": "SCRAPE ERROR",
-            "status": "FAILED"
-        }).eq("id", record_id).execute()
+    data = {}
+    for tr in soup.find_all("tr"):
+        text = tr.get_text(strip=True)
+        if "Legal Name:" in text:
+            tds = tr.find_all("td")
+            if tds:
+                data["Legal Name"] = tds[-1].get_text(strip=True)
+        elif "DBA Name:" in text:
+            tds = tr.find_all("td")
+            if tds:
+                data["DBA Name"] = tds[-1].get_text(strip=True)
+        elif "Entity Type:" in text:
+            tds = tr.find_all("td")
+            if tds:
+                data["Entity Type"] = tds[-1].get_text(strip=True)
+        elif "USDOT Status:" in text:
+            tds = tr.find_all("td")
+            if tds:
+                data["USDOT Status"] = tds[-1].get_text(strip=True)
 
+    if not data:
+        return None, "Connected successfully, but could not parse expected carrier fields."
 
-# ==========================================
-# 3. SIDEBAR NAVIGATION & SCRAPER CONTROLS
-# ==========================================
-st.sidebar.title("Logged In As:")
-st.sidebar.write("👤 **tony**")
+    return data, None
 
-if st.sidebar.button("Log Out"):
-    st.session_state.clear()
-    st.rerun()
+# --- STREAMLIT UI ---
+with st.form("scraper_form"):
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        search_type = st.selectbox("Search By", options=["MC_MX", "USDOT"])
+    with col2:
+        search_number = st.text_input("Enter Number", value="1066434")
+    
+    submit_button = st.form_submit_button("Search Carrier")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("FMCSA Scraper Controls")
+if submit_button:
+    if not search_number.strip():
+        st.warning("Please enter a valid number.")
+    else:
+        with st.spinner("Scraping SAFER..."):
+            result, error = scrape_safer(search_type, search_number.strip())
 
-if st.sidebar.button("🚀 Scrape Pending MC Numbers"):
-    try:
-        pending_resp = supabase.table("carriers").select("*").eq("status", "PENDING").execute()
-        pending_records = pending_resp.data
-
-        if not pending_records:
-            st.sidebar.info("No pending MC numbers found.")
+        if error:
+            st.error(error)
         else:
-            progress_bar = st.sidebar.progress(0)
-            for i, item in enumerate(pending_records):
-                scrape_safer_and_update(item["mc_number"], item["id"])
-                progress_bar.progress((i + 1) / len(pending_records))
-                time.sleep(2)  # 2s delay prevents FMCSA rate limiting
-            st.sidebar.success("Finished scraping pending items!")
-            st.rerun()
-    except Exception as e:
-        st.sidebar.error(f"Supabase Error: {e}")
-
-
-# ==========================================
-# 4. MAIN DASHBOARD UI & DATA DISPLAY
-# ==========================================
-st.title("Carrier CHK Data Harvester")
-
-@st.cache_data(ttl=5)
-def fetch_master_log():
-    try:
-        response = supabase.table("carriers").select("*").execute()
-        return response.data
-    except Exception as e:
-        st.error(f"Error connecting to database: Invalid API Key or URL. Check Streamlit Secrets. Details: {e}")
-        return None
-
-records = fetch_master_log()
-
-if records is None:
-    st.stop()
-
-# Filtering Controls
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    search_query = st.text_input("🔍 Search Name / MC:", "")
-with col2:
-    entity_filter = st.selectbox("🚛 Filter Entity Type:", ["ALL", "CARRIER", "BROKER"])
-with col3:
-    status_filter = st.selectbox("📌 Filter Status:", ["ALL", "ACTIVE", "INACTIVE"])
-with col4:
-    state_filter = st.selectbox("📍 Filter State:", ["ALL"])
-
-filtered_records = records
-if search_query:
-    filtered_records = [
-        r for r in filtered_records 
-        if search_query.lower() in str(r.get("mc_number", "")).lower() 
-        or search_query.lower() in str(r.get("carrier_name", "")).lower()
-    ]
-
-st.write(f"Showing **{len(filtered_records)}** of **{len(records)}** total harvested records.")
-
-# UI Tabs
-tab1, tab2, tab3 = st.tabs(["📄 Complete Master Log", "🎯 Verified Leads (Active Only)", "✉️ Raw Active Email"])
-
-with tab1:
-    if filtered_records:
-        st.dataframe(filtered_records, width="stretch")
-    else:
-        st.info("No records available.")
-
-with tab2:
-    active_leads = [r for r in filtered_records if "AUTHORIZED" in str(r.get("operating_status", "")).upper()]
-    if active_leads:
-        st.dataframe(active_leads, width="stretch")
-    else:
-        st.info("No active leads found.")
-
-with tab3:
-    emails = [r for r in filtered_records if r.get("email")]
-    if emails:
-        st.dataframe(emails, width="stretch")
-    else:
-        st.info("No active emails available.")
-
-# Export Section
-if filtered_records:
-    df = pd.DataFrame(filtered_records)
-    csv = df.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="📥 Export Master Sheet to CSV",
-        data=csv,
-        file_name="carrier_master_log.csv",
-        mime="text/csv",
-        width="stretch"
-    )
+            st.success("Carrier Found!")
+            st.json(result)
