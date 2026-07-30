@@ -18,9 +18,13 @@ SUPABASE_KEY = st.secrets.get("SUPABASE_KEY") or os.getenv("SUPABASE_KEY")
 @st.cache_resource
 def init_supabase():
     if not SUPABASE_URL or not SUPABASE_KEY:
-        st.error("⚠️ Missing SUPABASE_URL or SUPABASE_KEY in Streamlit Secrets.")
+        st.error("⚠️ Missing `SUPABASE_URL` or `SUPABASE_KEY` in Streamlit Secrets.")
         st.stop()
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    try:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        st.error(f"⚠️ Failed to initialize Supabase client: {e}")
+        st.stop()
 
 supabase: Client = init_supabase()
 
@@ -103,20 +107,22 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("FMCSA Scraper Controls")
 
 if st.sidebar.button("🚀 Scrape Pending MC Numbers"):
-    # Pull pending queue from Supabase
-    pending_resp = supabase.table("carriers").select("*").eq("status", "PENDING").execute()
-    pending_records = pending_resp.data
+    try:
+        pending_resp = supabase.table("carriers").select("*").eq("status", "PENDING").execute()
+        pending_records = pending_resp.data
 
-    if not pending_records:
-        st.sidebar.info("No pending MC numbers found.")
-    else:
-        progress_bar = st.sidebar.progress(0)
-        for i, item in enumerate(pending_records):
-            scrape_safer_and_update(item["mc_number"], item["id"])
-            progress_bar.progress((i + 1) / len(pending_records))
-            time.sleep(2)  # 2s delay prevents FMCSA rate limiting
-        st.sidebar.success("Finished scraping pending items!")
-        st.rerun()
+        if not pending_records:
+            st.sidebar.info("No pending MC numbers found.")
+        else:
+            progress_bar = st.sidebar.progress(0)
+            for i, item in enumerate(pending_records):
+                scrape_safer_and_update(item["mc_number"], item["id"])
+                progress_bar.progress((i + 1) / len(pending_records))
+                time.sleep(2)  # 2s delay prevents FMCSA rate limiting
+            st.sidebar.success("Finished scraping pending items!")
+            st.rerun()
+    except Exception as e:
+        st.sidebar.error(f"Supabase Error: {e}")
 
 
 # ==========================================
@@ -130,10 +136,13 @@ def fetch_master_log():
         response = supabase.table("carriers").select("*").execute()
         return response.data
     except Exception as e:
-        st.error(f"Error connecting to database: {e}")
-        return []
+        st.error(f"Error connecting to database: Check your Supabase API keys. Details: {e}")
+        return None
 
 records = fetch_master_log()
+
+if records is None:
+    st.stop()
 
 # Filtering Controls
 col1, col2, col3, col4 = st.columns(4)
