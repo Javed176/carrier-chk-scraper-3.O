@@ -54,11 +54,11 @@ def get_supabase_client() -> Client:
 
 supabase = get_supabase_client()
 
-# Session State Initialization
+# Session State Initialization - AUTH BYPASSED DIRECTLY HERE
 if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+    st.session_state.authenticated = True  # Automatically set to True
 if "user_role" not in st.session_state:
-    st.session_state.user_role = "user"
+    st.session_state.user_role = "super_admin"  # Automatically set as Admin
 if "harvesting" not in st.session_state:
     st.session_state.harvesting = False
 if "harvested_records" not in st.session_state:
@@ -67,66 +67,11 @@ if "current_mc" not in st.session_state:
     st.session_state.current_mc = 1006435
 
 # ==============================================================================
-# 2. SECURITY & SESSION TIMEOUT (JS TIMER)
-# ==============================================================================
-# Session lock / timeout script embedded in sidebar
-st.sidebar.markdown("""
-    <script>
-    var timeout;
-    function resetTimer() {
-        clearTimeout(timeout);
-        // 15 Minute Session Auto-Lock
-        timeout = setTimeout(function() {
-            alert("Session timed out due to inactivity.");
-            window.location.reload();
-        }, 900000);
-    }
-    document.onmousemove = resetTimer;
-    document.onkeypress = resetTimer;
-    </script>
-""", unsafe_allow_html=True)
-
-# Authentication Wall
-if not st.session_state.authenticated:
-    st.title("🔐 Enterprise Security Portal")
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Authenticate")
-
-        if submit:
-            # Query Supabase profiles / auth table
-            if supabase:
-                try:
-                    res = supabase.table("users").select("*").eq("username", username).execute()
-                    if res.data and password == res.data[0].get("password"):
-                        st.session_state.authenticated = True
-                        st.session_state.user_role = res.data[0].get("role", "user")
-                        st.success("Authenticated successfully.")
-                        st.rerun()
-                    else:
-                        st.error("Invalid credentials.")
-                except Exception:
-                    # Fallback simple auth if table check fails
-                    if username == "admin" and password == "admin123":
-                        st.session_state.authenticated = True
-                        st.session_state.user_role = "super_admin"
-                        st.rerun()
-                    else:
-                        st.error("Authentication failed.")
-            else:
-                # Direct dev login fallback
-                st.session_state.authenticated = True
-                st.rerun()
-    st.stop()
-
-# ==============================================================================
-# 3. DIRECT FMCSA SAFER SCRAPING ENGINE (REPLACES CARRIERCHK API)
+# 2. DIRECT FMCSA SAFER SCRAPING ENGINE
 # ==============================================================================
 def fetch_safer_carrier_data(mc_number: str) -> dict:
     """
-    Directly queries FMCSA SAFER via HTML parsing.
-    Replaces CarrierChk external API while producing identical standard JSON fields.
+    Directly queries FMCSA SAFER via HTML parsing using BeautifulSoup.
     """
     url = "https://safer.fmcsa.dot.gov/query.asp"
     payload = {
@@ -207,22 +152,10 @@ def fetch_safer_carrier_data(mc_number: str) -> dict:
         return {"error": f"Scraping exception: {str(e)}"}
 
 # ==============================================================================
-# 4. SIDEBAR CONTROLS & SUPER ADMIN DASHBOARD
+# 3. SIDEBAR CONTROLS
 # ==============================================================================
 st.sidebar.title("🎛️ Control Panel")
 st.sidebar.write(f"**User Role:** `{st.session_state.user_role}`")
-
-if st.session_state.user_role == "super_admin":
-    with st.sidebar.expander("🛠️ Super Admin Management"):
-        st.caption("Global Rate Limits & User Provisioning")
-        new_user = st.text_input("New Username")
-        new_pass = st.text_input("New Password", type="password")
-        if st.button("Create User") and supabase:
-            try:
-                supabase.table("users").insert({"username": new_user, "password": new_pass, "role": "user"}).execute()
-                st.success("User added to Supabase.")
-            except Exception as e:
-                st.error(f"Failed: {e}")
 
 delay_ms = st.sidebar.slider("Harvesting Delay (ms)", min_value=100, max_value=3000, value=500, step=100)
 start_mc_input = st.sidebar.number_input("Target MC Number", value=st.session_state.current_mc, step=1)
@@ -235,12 +168,8 @@ if col_h1.button("Start Harvester"):
 if col_h2.button("Stop"):
     st.session_state.harvesting = False
 
-if st.sidebar.button("Logout"):
-    st.session_state.authenticated = False
-    st.rerun()
-
 # ==============================================================================
-# 5. CONTINUOUS HARVESTING ENGINE (LOOP)
+# 4. CONTINUOUS HARVESTING ENGINE (LOOP)
 # ==============================================================================
 st.title("🚚 SAFER Carrier Data Scraper")
 
@@ -268,7 +197,7 @@ if st.session_state.harvesting:
     st.rerun()
 
 # ==============================================================================
-# 6. SINGLE LOOKUP FORM & ANALYTICS DASHBOARD
+# 5. SINGLE LOOKUP FORM & ANALYTICS DASHBOARD
 # ==============================================================================
 st.markdown("### 🔎 Single Carrier Lookup")
 with st.form("single_lookup"):
