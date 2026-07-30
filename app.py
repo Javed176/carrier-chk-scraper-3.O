@@ -421,7 +421,7 @@ with col1:
         "Start MC Number",
         min_value=1,
         max_value=9_999_999,
-        value=1066434,
+        value=1800000,
         step=1,
         format="%d",
         key="start_mc",
