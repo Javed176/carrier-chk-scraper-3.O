@@ -458,8 +458,7 @@ if st.session_state.scraping:
         mc = st.session_state.current_mc
 
         status_text.markdown(
-            f'<p style="color:#a0aec0;font-size:13px;text-align:center;">'
-            f'🔄 Fetching <b style="color:#c7d2fe;">MC-{mc:07d}</b> '\n            f'&nbsp;·&nbsp; <b style="color:#68d391;">{count}</b> scraped so far</p>',
+            f'<p style="color:#a0aec0;font-size:13px;text-align:center;">🔄 Fetching <b style="color:#c7d2fe;">MC-{mc:07d}</b> &nbsp;·&nbsp; <b style="color:#68d391;">{count}</b> scraped so far</p>',
             unsafe_allow_html=True,
         )
 
@@ -473,8 +472,7 @@ if st.session_state.scraping:
         live_table.markdown(render_table(preview), unsafe_allow_html=True)
 
     status_text.markdown(
-        f'<p style="color:#68d391;font-size:13px;text-align:center;">'
-        f'⛔ Stopped at <b>MC-{st.session_state.current_mc:07d}</b> '\n        f'&nbsp;·&nbsp; <b>{count}</b> total scraped</p>',
+        f'<p style="color:#68d391;font-size:13px;text-align:center;">⛔ Stopped at <b>MC-{st.session_state.current_mc:07d}</b> &nbsp;·&nbsp; <b>{count}</b> total scraped</p>',
         unsafe_allow_html=True,
     )
     st.session_state.scraping = False
