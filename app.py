@@ -12,8 +12,12 @@ from supabase import create_client, Client
 # ==========================================
 st.set_page_config(page_title="Carrier CHK Data Harvester", layout="wide")
 
-SUPABASE_URL = st.secrets.get("SUPABASE_URL") or os.getenv("SUPABASE_URL")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY") or os.getenv("SUPABASE_KEY")
+# Get secrets and strip stray whitespace/quotes
+raw_url = st.secrets.get("SUPABASE_URL") or os.getenv("SUPABASE_URL", "")
+raw_key = st.secrets.get("SUPABASE_KEY") or os.getenv("SUPABASE_KEY", "")
+
+SUPABASE_URL = raw_url.strip().strip("'").strip('"')
+SUPABASE_KEY = raw_key.strip().strip("'").strip('"')
 
 @st.cache_resource
 def init_supabase():
@@ -136,7 +140,7 @@ def fetch_master_log():
         response = supabase.table("carriers").select("*").execute()
         return response.data
     except Exception as e:
-        st.error(f"Error connecting to database: Check your Supabase API keys. Details: {e}")
+        st.error(f"Error connecting to database: Invalid API Key or URL. Check Streamlit Secrets. Details: {e}")
         return None
 
 records = fetch_master_log()
