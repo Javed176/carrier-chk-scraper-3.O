@@ -1,3 +1,6 @@
-streamlit
+streamlit>=1.36.0
+pandas>=2.0.0
+supabase
 requests
 beautifulsoup4
+python-dotenv
